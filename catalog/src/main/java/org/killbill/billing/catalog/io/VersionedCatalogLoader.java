@@ -87,7 +87,7 @@ public class VersionedCatalogLoader implements CatalogLoader {
                 result.add(new StandaloneCatalogWithPriceOverride(catalog, priceOverride, InternalCallContextFactory.INTERNAL_TENANT_RECORD_ID, internalCallContextFactory));
             }
             // Perform initialization and validation for VersionedCatalog
-            XMLLoader.initializeAndValidate(new URI(uriString), result);
+            XMLLoader.initializeAndValidate(result);
             return result;
         } catch (final ValidationException e) {
             logger.warn("Failed to load default catalog", e);
@@ -121,13 +121,13 @@ public class VersionedCatalogLoader implements CatalogLoader {
             uri = new URI("/tenantCatalog");
             for (final String cur : catalogXMLs) {
                 final InputStream curCatalogStream = new ByteArrayInputStream(cur.getBytes());
-                final StandaloneCatalog catalog = XMLLoader.getObjectFromStream(uri, curCatalogStream, StandaloneCatalog.class);
+                final StandaloneCatalog catalog = XMLLoader.getObjectFromStream(curCatalogStream, StandaloneCatalog.class);
                 if (!filterTemplateCatalog || !catalog.isTemplateCatalog()) {
                     result.add(new StandaloneCatalogWithPriceOverride(catalog, priceOverride, tenantRecordId, internalCallContextFactory));
                 }
             }
             // Perform initialization and validation for VersionedCatalog
-            XMLLoader.initializeAndValidate(uri, result);
+            XMLLoader.initializeAndValidate(result);
             return result;
         } catch (final ValidationException e) {
             logger.warn("Failed to load catalog for tenantRecordId='{}'", tenantRecordId, e);
@@ -145,9 +145,6 @@ public class VersionedCatalogLoader implements CatalogLoader {
             logger.warn("Failed to load catalog for tenantRecordId='{}'", tenantRecordId, e);
             throw new IllegalStateException(e);
         } catch (final SAXException e) {
-            logger.warn("Failed to load catalog for tenantRecordId='{}'", tenantRecordId, e);
-            throw new IllegalStateException(e);
-        } catch (final InvalidConfigException e) {
             logger.warn("Failed to load catalog for tenantRecordId='{}'", tenantRecordId, e);
             throw new IllegalStateException(e);
         }

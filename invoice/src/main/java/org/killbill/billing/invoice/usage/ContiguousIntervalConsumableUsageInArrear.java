@@ -24,6 +24,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 
@@ -36,12 +37,14 @@ import org.killbill.billing.catalog.api.TieredBlock;
 import org.killbill.billing.catalog.api.Usage;
 import org.killbill.billing.invoice.api.InvoiceApiException;
 import org.killbill.billing.invoice.api.InvoiceItem;
+import org.killbill.billing.invoice.generator.InvoiceWithMetadata.TrackingRecordId;
 import org.killbill.billing.invoice.model.UsageInvoiceItem;
 import org.killbill.billing.invoice.usage.details.UsageConsumableInArrearAggregate;
 import org.killbill.billing.invoice.usage.details.UsageConsumableInArrearTierUnitAggregate;
 import org.killbill.billing.invoice.usage.details.UsageInArrearAggregate;
 import org.killbill.billing.usage.RawUsage;
 import org.killbill.billing.usage.api.RolledUpUnit;
+import org.killbill.billing.util.config.definition.InvoiceConfig;
 import org.killbill.billing.util.config.definition.InvoiceConfig.UsageDetailMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,11 +67,13 @@ public class ContiguousIntervalConsumableUsageInArrear extends ContiguousInterva
                                                      final UUID accountId,
                                                      final UUID invoiceId,
                                                      final List<RawUsage> rawSubscriptionUsage,
+                                                     final Set<TrackingRecordId> existingTrackingId,
                                                      final LocalDate targetDate,
                                                      final LocalDate rawUsageStartDate,
                                                      final UsageDetailMode usageDetailMode,
+                                                     final InvoiceConfig invoiceConfig,
                                                      final InternalTenantContext internalTenantContext) {
-        super(usage, accountId, invoiceId, rawSubscriptionUsage, targetDate, rawUsageStartDate, usageDetailMode, internalTenantContext);
+        super(usage, accountId, invoiceId, rawSubscriptionUsage, existingTrackingId, targetDate, rawUsageStartDate, usageDetailMode, invoiceConfig, internalTenantContext);
     }
 
     @Override
@@ -79,9 +84,8 @@ public class ContiguousIntervalConsumableUsageInArrear extends ContiguousInterva
 
         if (amountToBill.compareTo(BigDecimal.ZERO) < 0) {
             throw new InvoiceApiException(ErrorCode.UNEXPECTED_ERROR,
-                                          String.format("ILLEGAL INVOICING STATE: Usage period start='%s', end='%s', previously billed amount='%.2f', new proposed amount='%.2f'",
-                                                        startDate, endDate, billedUsage, toBeBilledUsage));
-
+                                          String.format("ILLEGAL INVOICING STATE: Usage period start='%s', end='%s', amountToBill='%s', (previously billed amount='%s', new proposed amount='%s')",
+                                                        startDate, endDate, amountToBill, billedUsage, toBeBilledUsage));
         } else /* amountToBill.compareTo(BigDecimal.ZERO) >= 0 */ {
             if (!isPeriodPreviouslyBilled || amountToBill.compareTo(BigDecimal.ZERO) > 0) {
                 if (UsageDetailMode.DETAIL == usageDetailMode) {
@@ -143,27 +147,25 @@ public class ContiguousIntervalConsumableUsageInArrear extends ContiguousInterva
             if (usageDetailMode == UsageDetailMode.DETAIL) {
 
                 final UsageConsumableInArrearTierUnitAggregate targetTierUnitDetail = fromJson(bi.getItemDetails(), new TypeReference<UsageConsumableInArrearTierUnitAggregate>() {});
-                if (!targetTierUnitDetail.getTierUnit().equals(unitType)) {
-                    continue;
+                if (targetTierUnitDetail.getTierUnit().equals(unitType)) {
+                    tierDetails.add(new UsageConsumableInArrearTierUnitAggregate(targetTierUnitDetail.getTier(), targetTierUnitDetail.getTierUnit(), bi.getRate(), targetTierUnitDetail.getQuantity(), bi.getQuantity(), bi.getAmount()));
                 }
-
-                tierDetails.add(new UsageConsumableInArrearTierUnitAggregate(targetTierUnitDetail.getTier(), targetTierUnitDetail.getTierUnit(), bi.getRate(), targetTierUnitDetail.getQuantity(), bi.getQuantity(), bi.getAmount()));
             } else {
                 final UsageConsumableInArrearAggregate usageDetail = fromJson(bi.getItemDetails(), new TypeReference<UsageConsumableInArrearAggregate>() {});
-                tierDetails.addAll(usageDetail.getTierDetails());
+                for (final UsageConsumableInArrearTierUnitAggregate unitAgg : usageDetail.getTierDetails()) {
+                    if (unitAgg.getTierUnit().equals(unitType)) {
+                        tierDetails.add(unitAgg);
+                    }
+                }
             }
         }
 
         for (final UsageConsumableInArrearTierUnitAggregate curDetail : tierDetails) {
-
-            if (curDetail.getTierUnit().equals(unitType)) {
-
-                if (!resultMap.containsKey(curDetail.getTier())) {
-                    resultMap.put(curDetail.getTier(), curDetail);
-                } else {
-                    final UsageConsumableInArrearTierUnitAggregate perTierDetail = resultMap.get(curDetail.getTier());
-                    perTierDetail.updateQuantityAndAmount(curDetail.getQuantity());
-                }
+            if (!resultMap.containsKey(curDetail.getTier())) {
+                resultMap.put(curDetail.getTier(), curDetail);
+            } else {
+                final UsageConsumableInArrearTierUnitAggregate perTierDetail = resultMap.get(curDetail.getTier());
+                perTierDetail.updateQuantityAndAmount(curDetail.getQuantity());
             }
         }
         return ImmutableList.copyOf(resultMap.values());

@@ -79,9 +79,7 @@ public abstract class KillbillClient extends GuicyKillbillTestSuiteWithEmbeddedD
     protected static final ImmutableMap<String, String> NULL_PLUGIN_PROPERTIES = null;
     protected static final ImmutableList<AuditLog> EMPTY_AUDIT_LOGS = ImmutableList.<AuditLog>of();
 
-
-
-    protected final long DEFAULT_WAIT_COMPLETION_TIMEOUT_SEC = 10;
+    protected final long DEFAULT_WAIT_COMPLETION_TIMEOUT_SEC = 60;
 
     protected static final String PLUGIN_NAME = "noop";
 
@@ -216,7 +214,8 @@ public abstract class KillbillClient extends GuicyKillbillTestSuiteWithEmbeddedD
     protected Subscription createSubscription(final UUID accountId, final String bundleExternalKey, final String productName,
                                               final ProductCategory productCategory, final BillingPeriod billingPeriod, final boolean waitCompletion) throws Exception {
         final Account account = accountApi.getAccount(accountId, requestOptions);
-        if (account.getBillCycleDayLocal() == null || account.getBillCycleDayLocal() == 0) {
+        // ANNUAL subscriptions are SUBSCRIPTION aligned
+        if (billingPeriod == BillingPeriod.MONTHLY && (account.getBillCycleDayLocal() == null || account.getBillCycleDayLocal() == 0)) {
             callbackServlet.pushExpectedEvent(ExtBusEventType.ACCOUNT_CHANGE);
         }
         callbackServlet.pushExpectedEvents(ExtBusEventType.ENTITLEMENT_CREATION, ExtBusEventType.SUBSCRIPTION_CREATION, ExtBusEventType.SUBSCRIPTION_CREATION, ExtBusEventType.INVOICE_CREATION);

@@ -32,12 +32,14 @@ import org.killbill.billing.catalog.api.Tier;
 import org.killbill.billing.catalog.api.Usage;
 import org.killbill.billing.invoice.api.InvoiceApiException;
 import org.killbill.billing.invoice.api.InvoiceItem;
+import org.killbill.billing.invoice.generator.InvoiceWithMetadata.TrackingRecordId;
 import org.killbill.billing.invoice.model.UsageInvoiceItem;
 import org.killbill.billing.invoice.usage.details.UsageCapacityInArrearAggregate;
 import org.killbill.billing.invoice.usage.details.UsageInArrearAggregate;
 import org.killbill.billing.invoice.usage.details.UsageInArrearTierUnitDetail;
 import org.killbill.billing.usage.RawUsage;
 import org.killbill.billing.usage.api.RolledUpUnit;
+import org.killbill.billing.util.config.definition.InvoiceConfig;
 import org.killbill.billing.util.config.definition.InvoiceConfig.UsageDetailMode;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -55,11 +57,13 @@ public class ContiguousIntervalCapacityUsageInArrear extends ContiguousIntervalU
                                                    final UUID accountId,
                                                    final UUID invoiceId,
                                                    final List<RawUsage> rawSubscriptionUsage,
+                                                   final Set<TrackingRecordId> existingTrackingId,
                                                    final LocalDate targetDate,
                                                    final LocalDate rawUsageStartDate,
                                                    final UsageDetailMode usageDetailMode,
+                                                   final InvoiceConfig invoiceConfig,
                                                    final InternalTenantContext internalTenantContext) {
-        super(usage, accountId, invoiceId, rawSubscriptionUsage, targetDate, rawUsageStartDate, usageDetailMode, internalTenantContext);
+        super(usage, accountId, invoiceId, rawSubscriptionUsage, existingTrackingId, targetDate, rawUsageStartDate, usageDetailMode, invoiceConfig, internalTenantContext);
     }
 
     @Override
@@ -69,8 +73,8 @@ public class ContiguousIntervalCapacityUsageInArrear extends ContiguousIntervalU
 
         if (amountToBill.compareTo(BigDecimal.ZERO) < 0) {
             throw new InvoiceApiException(ErrorCode.UNEXPECTED_ERROR,
-                                          String.format("ILLEGAL INVOICING STATE: Usage period start='%s', end='%s', previously billed amount='%.2f', new proposed amount='%.2f'",
-                                                        startDate, endDate, billedUsage, toBeBilledUsage));
+                                          String.format("ILLEGAL INVOICING STATE: Usage period start='%s', end='%s', amountToBill='%s', (previously billed amount='%s', new proposed amount='%s')",
+                                                        startDate, endDate, amountToBill, billedUsage, toBeBilledUsage));
         } else /* amountToBill.compareTo(BigDecimal.ZERO) >= 0 */ {
             if (!isPeriodPreviouslyBilled || amountToBill.compareTo(BigDecimal.ZERO) > 0) {
                 final String itemDetails = areAllBilledItemsWithDetails ? toJson(toBeBilledUsageDetails) : null;

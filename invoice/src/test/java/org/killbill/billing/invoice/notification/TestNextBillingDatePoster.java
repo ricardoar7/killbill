@@ -29,8 +29,8 @@ import org.killbill.billing.account.api.Account;
 import org.killbill.billing.invoice.InvoiceDispatcher.FutureAccountNotifications;
 import org.killbill.billing.invoice.InvoiceDispatcher.FutureAccountNotifications.FutureAccountNotificationsBuilder;
 import org.killbill.billing.invoice.InvoiceTestSuiteWithEmbeddedDB;
-import org.killbill.billing.invoice.api.DefaultInvoiceService;
 import org.killbill.billing.platform.api.KillbillConfigSource;
+import org.killbill.billing.platform.api.KillbillService.KILLBILL_SERVICES;
 import org.killbill.billing.subscription.api.SubscriptionBase;
 import org.killbill.notificationq.api.NotificationEventWithMetadata;
 import org.killbill.notificationq.api.NotificationQueue;
@@ -38,17 +38,15 @@ import org.testng.Assert;
 import org.testng.annotations.Test;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 
 public class TestNextBillingDatePoster extends InvoiceTestSuiteWithEmbeddedDB {
 
-    protected KillbillConfigSource getConfigSource() {
-        final ImmutableMap<String, String> extraProperties = ImmutableMap.<String, String>builder()
-                .put("org.killbill.invoice.dryRunNotificationSchedule", "48h")
-                .build();
-        return getConfigSource("/resource.properties", extraProperties);
+    protected KillbillConfigSource getConfigSource(final Map<String, String> extraProperties) {
+        final Map<String, String> allExtraProperties = new HashMap<String, String>(extraProperties);
+        allExtraProperties.put("org.killbill.invoice.dryRunNotificationSchedule", "48h");
+        return getConfigSource("/resource.properties", allExtraProperties);
     }
 
     @Test(groups = "slow")
@@ -66,7 +64,7 @@ public class TestNextBillingDatePoster extends InvoiceTestSuiteWithEmbeddedDB {
         invoiceDao.setFutureAccountNotificationsForEmptyInvoice(account.getId(), futureAccountNotifications, internalCallContext);
         invoiceDao.setFutureAccountNotificationsForEmptyInvoice(account.getId(), futureAccountNotifications, internalCallContext);
 
-        final NotificationQueue nextBillingQueue = notificationQueueService.getNotificationQueue(DefaultInvoiceService.INVOICE_SERVICE_NAME,
+        final NotificationQueue nextBillingQueue = notificationQueueService.getNotificationQueue(KILLBILL_SERVICES.INVOICE_SERVICE.getServiceName(),
                                                                                                  DefaultNextBillingDateNotifier.NEXT_BILLING_DATE_NOTIFIER_QUEUE);
         final Iterable<NotificationEventWithMetadata<NextBillingDateNotificationKey>> futureNotifications = nextBillingQueue.getFutureNotificationForSearchKeys(accountRecordId, internalCallContext.getTenantRecordId());
         final ImmutableList<NotificationEventWithMetadata<NextBillingDateNotificationKey>> futureNotificationsList = ImmutableList.copyOf(futureNotifications);
@@ -102,8 +100,7 @@ public class TestNextBillingDatePoster extends InvoiceTestSuiteWithEmbeddedDB {
         final FutureAccountNotifications futureAccountNotifications2 = createFutureAccountNotifications(subscriptionId2, notificationDate);
         invoiceDao.setFutureAccountNotificationsForEmptyInvoice(account.getId(), futureAccountNotifications2, internalCallContext);
 
-
-        final NotificationQueue nextBillingQueue = notificationQueueService.getNotificationQueue(DefaultInvoiceService.INVOICE_SERVICE_NAME,
+        final NotificationQueue nextBillingQueue = notificationQueueService.getNotificationQueue(KILLBILL_SERVICES.INVOICE_SERVICE.getServiceName(),
                                                                                                  DefaultNextBillingDateNotifier.NEXT_BILLING_DATE_NOTIFIER_QUEUE);
 
         final Iterable<NotificationEventWithMetadata<NextBillingDateNotificationKey>> futureNotifications = nextBillingQueue.getFutureNotificationForSearchKeys(accountRecordId, internalCallContext.getTenantRecordId());
@@ -121,7 +118,6 @@ public class TestNextBillingDatePoster extends InvoiceTestSuiteWithEmbeddedDB {
         Assert.assertEquals(uuidKeysList.get(0), subscriptionId1);
         Assert.assertEquals(uuidKeysList.get(1), subscriptionId2);
     }
-
 
     @Test(groups = "slow")
     public void testDryRunWithSameSubscriptionLater() throws Exception {
@@ -145,10 +141,9 @@ public class TestNextBillingDatePoster extends InvoiceTestSuiteWithEmbeddedDB {
 
         final FutureAccountNotifications futureAccountNotifications2 = createFutureAccountNotifications(subscriptionId, notificationDate2);
 
-
         invoiceDao.setFutureAccountNotificationsForEmptyInvoice(account.getId(), futureAccountNotifications2, internalCallContext);
 
-        final NotificationQueue nextBillingQueue = notificationQueueService.getNotificationQueue(DefaultInvoiceService.INVOICE_SERVICE_NAME,
+        final NotificationQueue nextBillingQueue = notificationQueueService.getNotificationQueue(KILLBILL_SERVICES.INVOICE_SERVICE.getServiceName(),
                                                                                                  DefaultNextBillingDateNotifier.NEXT_BILLING_DATE_NOTIFIER_QUEUE);
         final Iterable<NotificationEventWithMetadata<NextBillingDateNotificationKey>> futureNotifications = nextBillingQueue.getFutureNotificationForSearchKeys(accountRecordId, internalCallContext.getTenantRecordId());
         final ImmutableList<NotificationEventWithMetadata<NextBillingDateNotificationKey>> futureNotificationsList = ImmutableList.copyOf(futureNotifications);
@@ -163,7 +158,6 @@ public class TestNextBillingDatePoster extends InvoiceTestSuiteWithEmbeddedDB {
         final List<UUID> uuidKeysList1 = ImmutableList.copyOf(uuidKeys1);
         Assert.assertEquals(uuidKeysList1.size(), 1);
         Assert.assertEquals(uuidKeysList1.get(0), subscriptionId);
-
 
         final NotificationEventWithMetadata<NextBillingDateNotificationKey> notification2 = futureNotificationsList.get(1);
         Assert.assertEquals(notification2.getEffectiveDate(), internalCallContext.toUTCDateTime(notificationDate2));

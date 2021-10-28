@@ -1,3 +1,45 @@
+0.20.17
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.17
+
+0.20.14
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.14
+
+0.20.13
+    See https://github.com/killbill/killbill/releases/tag/killbill-0.20.13
+
+0.20.12
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.12
+
+0.20.11
+    Add usage logic to not re-bill existing enclosing past periods
+
+0.20.10
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.10
+
+0.20.9
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.9
+
+0.20.8
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.8
+
+0.20.7
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.7
+
+0.20.6
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.6
+
+0.20.5
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.5
+
+0.20.4
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.4
+
+0.20.3
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.3
+
+0.20.2
+    https://github.com/killbill/killbill/releases/tag/killbill-0.20.2
+
 0.20.1
     https://github.com/killbill/killbill/releases/tag/killbill-0.20.1
 
@@ -76,7 +118,7 @@
     Fix JDBC connection leak in pagination API. Fixes #853
     Fix limitation where catalog plan name cannot end with an number. Fixes #842
     Reduce log level of InvoiceItemGeneratorLogger. Fixes #851
-    Usage detail/aggregate mode. Fixes #839 
+    Usage detail/aggregate mode. Fixes #839
     Add metadata detail field to external charges. Fixes #843
     Add ability to void invoices. Fixes #833
 
@@ -93,6 +135,9 @@
 
 0.19.0
     Initial dev release
+
+0.18.22
+    See https://github.com/killbill/killbill/releases/tag/killbill-0.18.22
 
 0.18.21
     Fix for NPE if the only available usage is before the first transition date

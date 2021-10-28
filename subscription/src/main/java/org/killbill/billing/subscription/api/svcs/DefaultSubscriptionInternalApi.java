@@ -1,7 +1,7 @@
 /*
  * Copyright 2010-2013 Ning, Inc.
- * Copyright 2014-2018 Groupon, Inc
- * Copyright 2014-2018 The Billing Project, LLC
+ * Copyright 2014-2019 Groupon, Inc
+ * Copyright 2014-2019 The Billing Project, LLC
  *
  * The Billing Project licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -35,14 +35,11 @@ import org.killbill.billing.ErrorCode;
 import org.killbill.billing.callcontext.InternalCallContext;
 import org.killbill.billing.callcontext.InternalTenantContext;
 import org.killbill.billing.catalog.api.BillingActionPolicy;
-import org.killbill.billing.catalog.api.BillingAlignment;
 import org.killbill.billing.catalog.api.Catalog;
 import org.killbill.billing.catalog.api.CatalogApiException;
 import org.killbill.billing.catalog.api.CatalogInternalApi;
 import org.killbill.billing.catalog.api.Plan;
-import org.killbill.billing.catalog.api.PlanPhasePriceOverride;
 import org.killbill.billing.catalog.api.PlanPhasePriceOverridesWithCallContext;
-import org.killbill.billing.catalog.api.PlanPhaseSpecifier;
 import org.killbill.billing.catalog.api.Product;
 import org.killbill.billing.catalog.api.ProductCategory;
 import org.killbill.billing.entitlement.api.Entitlement.EntitlementState;
@@ -56,6 +53,7 @@ import org.killbill.billing.subscription.api.SubscriptionBaseApiService;
 import org.killbill.billing.subscription.api.SubscriptionBaseInternalApi;
 import org.killbill.billing.subscription.api.SubscriptionBaseWithAddOns;
 import org.killbill.billing.subscription.api.SubscriptionBaseWithAddOnsSpecifier;
+import org.killbill.billing.subscription.api.user.SubscriptionBillingEvent;
 import org.killbill.billing.subscription.api.user.DefaultEffectiveSubscriptionEvent;
 import org.killbill.billing.subscription.api.user.DefaultSubscriptionBase;
 import org.killbill.billing.subscription.api.user.DefaultSubscriptionBaseBundle;
@@ -71,7 +69,6 @@ import org.killbill.billing.subscription.engine.dao.model.SubscriptionBundleMode
 import org.killbill.billing.subscription.events.SubscriptionBaseEvent;
 import org.killbill.billing.subscription.events.bcd.BCDEvent;
 import org.killbill.billing.subscription.events.bcd.BCDEventData;
-import org.killbill.billing.util.bcd.BillCycleDayCalculator;
 import org.killbill.billing.util.cache.AccountIdFromBundleIdCacheLoader;
 import org.killbill.billing.util.cache.BundleIdFromSubscriptionIdCacheLoader;
 import org.killbill.billing.util.cache.Cachable.CacheType;
@@ -158,7 +155,7 @@ public class DefaultSubscriptionInternalApi extends DefaultSubscriptionBaseCreat
     }
 
     @Override
-    public void cancelBaseSubscriptions(final Iterable<SubscriptionBase> subscriptions, final BillingActionPolicy policy, int accountBillCycleDayLocal, final InternalCallContext context) throws SubscriptionBaseApiException {
+    public void cancelBaseSubscriptions(final Iterable<SubscriptionBase> subscriptions, final BillingActionPolicy policy, final InternalCallContext context) throws SubscriptionBaseApiException {
 
         try {
             final Catalog catalog = catalogInternalApi.getFullCatalog(true, true, context);
@@ -174,7 +171,6 @@ public class DefaultSubscriptionInternalApi extends DefaultSubscriptionBaseCreat
                                                                                                                        }
                                                                                                                    }),
                                                               policy,
-                                                              accountBillCycleDayLocal,
                                                               catalog,
                                                               context);
         } catch (CatalogApiException e) {
@@ -354,9 +350,8 @@ public class DefaultSubscriptionInternalApi extends DefaultSubscriptionBaseCreat
     }
 
     @Override
-    public List<EffectiveSubscriptionInternalEvent> getBillingTransitions(final SubscriptionBase subscription, final InternalTenantContext context) {
-        final List<SubscriptionBaseTransition> transitions = ((DefaultSubscriptionBase) subscription).getBillingTransitions();
-        return convertEffectiveSubscriptionInternalEventFromSubscriptionTransitions(subscription, context, transitions);
+    public List<SubscriptionBillingEvent> getSubscriptionBillingEvents(final SubscriptionBase subscription, final InternalTenantContext context) {
+        return((DefaultSubscriptionBase) subscription).getBillingTransitions();
     }
 
     @Override
@@ -373,7 +368,7 @@ public class DefaultSubscriptionInternalApi extends DefaultSubscriptionBaseCreat
         final DateTime effectiveDate = (requestedDateWithMs != null) ? DefaultClock.truncateMs(requestedDateWithMs) : null;
         final DateTime effectiveCatalogDate = effectiveDate != null ? effectiveDate : context.getCreatedDate();
         final PlanPhasePriceOverridesWithCallContext overridesWithContext = new DefaultPlanPhasePriceOverridesWithCallContext(spec.getOverrides(), callContext);
-        final Plan plan = catalog.createOrFindPlan(spec.getPlanPhaseSpecifier(), overridesWithContext, effectiveCatalogDate, subscription.getStartDate());
+        final Plan plan = catalog.createOrFindPlan(spec.getPlanPhaseSpecifier(), overridesWithContext, effectiveCatalogDate);
         if (ProductCategory.ADD_ON.toString().equalsIgnoreCase(plan.getProduct().getCategory().toString())) {
             if (plan.getPlansAllowedInBundle() != -1
                 && plan.getPlansAllowedInBundle() > 0
@@ -449,19 +444,9 @@ public class DefaultSubscriptionInternalApi extends DefaultSubscriptionBaseCreat
         try {
             catalog = catalogInternalApi.getFullCatalog(true, true, internalCallContext);
             final DefaultSubscriptionBase subscription = (DefaultSubscriptionBase) getSubscriptionFromId(subscriptionId, internalCallContext);
-            final DateTime effectiveDate = getEffectiveDateForNewBCD(bcd, effectiveFromDate, internalCallContext);
+            final DateTime effectiveDate = getEffectiveDateForNewBCD(bcd, effectiveFromDate, subscription.getStartDate(), internalCallContext);
             final BCDEvent bcdEvent = BCDEventData.createBCDEvent(subscription, effectiveDate, bcd);
             dao.createBCDChangeEvent(subscription, bcdEvent, catalog, internalCallContext);
-        } catch (final CatalogApiException e) {
-            throw new SubscriptionBaseApiException(e);
-        }
-    }
-
-    @Override
-    public int getDefaultBillCycleDayLocal(final Map<UUID, Integer> bcdCache, final SubscriptionBase subscription, final SubscriptionBase baseSubscription, final PlanPhaseSpecifier planPhaseSpecifier, final int accountBillCycleDayLocal, final Catalog catalog, final InternalTenantContext context) throws SubscriptionBaseApiException {
-        try {
-            final BillingAlignment alignment = catalog.billingAlignment(planPhaseSpecifier, clock.getUTCNow(), subscription.getStartDate());
-            return BillCycleDayCalculator.calculateBcdForAlignment(bcdCache, subscription, baseSubscription, alignment, context, accountBillCycleDayLocal);
         } catch (final CatalogApiException e) {
             throw new SubscriptionBaseApiException(e);
         }
@@ -522,7 +507,7 @@ public class DefaultSubscriptionInternalApi extends DefaultSubscriptionBaseCreat
     }
 
     @VisibleForTesting
-    DateTime getEffectiveDateForNewBCD(final int bcd, @Nullable final LocalDate effectiveFromDate, final InternalCallContext internalCallContext) {
+    DateTime getEffectiveDateForNewBCD(final int bcd, @Nullable final LocalDate effectiveFromDate, final DateTime subscriptionStartDate, final InternalCallContext internalCallContext) {
         if (internalCallContext.getAccountRecordId() == null) {
             throw new IllegalStateException("Need to have a valid context with accountRecordId");
         }
@@ -550,7 +535,12 @@ public class DefaultSubscriptionInternalApi extends DefaultSubscriptionBaseCreat
         } else /* bcd > lastDayOfMonth && bcd > currentDay */ {
             requestedDate = new LocalDate(startDate.getYear(), startDate.getMonthOfYear(), lastDayOfMonth);
         }
-        return requestedDate == null ? internalCallContext.getCreatedDate() : internalCallContext.toUTCDateTime(requestedDate);
+        DateTime requestedDateTime = requestedDate == null ? internalCallContext.getCreatedDate() : internalCallContext.toUTCDateTime(requestedDate);
+        // The event needs to be after the subscription start date
+        while (requestedDateTime.compareTo(subscriptionStartDate) < 0) {
+            requestedDateTime = requestedDateTime.plusMonths(1);
+        }
+        return requestedDateTime;
     }
 
     private List<EffectiveSubscriptionInternalEvent> convertEffectiveSubscriptionInternalEventFromSubscriptionTransitions(final SubscriptionBase subscription,

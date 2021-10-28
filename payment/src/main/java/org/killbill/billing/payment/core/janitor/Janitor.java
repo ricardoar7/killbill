@@ -26,7 +26,7 @@ import javax.inject.Inject;
 import org.joda.time.DateTime;
 import org.killbill.billing.events.PaymentInternalEvent;
 import org.killbill.billing.payment.core.PaymentExecutors;
-import org.killbill.billing.payment.glue.DefaultPaymentService;
+import org.killbill.billing.platform.api.KillbillService.KILLBILL_SERVICES;
 import org.killbill.billing.util.config.definition.PaymentConfig;
 import org.killbill.commons.locker.GlobalLocker;
 import org.killbill.notificationq.api.NotificationEvent;
@@ -53,7 +53,6 @@ public class Janitor {
     private final PaymentExecutors paymentExecutors;
 
     private final IncompletePaymentAttemptTask incompletePaymentAttemptTask;
-    private final IncompletePaymentTransactionTask incompletePaymentTransactionTask;
     private NotificationQueue janitorQueue;
     private ScheduledExecutorService janitorExecutor;
 
@@ -61,20 +60,18 @@ public class Janitor {
 
     @Inject
     public Janitor(final IncompletePaymentAttemptTask incompletePaymentAttemptTask,
-                   final IncompletePaymentTransactionTask incompletePaymentTransactionTask,
                    final GlobalLocker locker,
                    final PaymentConfig paymentConfig,
                    final NotificationQueueService notificationQueueService,
                    final PaymentExecutors paymentExecutors) {
         this.incompletePaymentAttemptTask = incompletePaymentAttemptTask;
-        this.incompletePaymentTransactionTask = incompletePaymentTransactionTask;
         this.notificationQueueService = notificationQueueService;
         this.paymentExecutors = paymentExecutors;
         this.paymentConfig = paymentConfig;
     }
 
     public void initialize() throws NotificationQueueAlreadyExists {
-        janitorQueue = notificationQueueService.createNotificationQueue(DefaultPaymentService.SERVICE_NAME,
+        janitorQueue = notificationQueueService.createNotificationQueue(KILLBILL_SERVICES.PAYMENT_SERVICE.getServiceName(),
                                                                         QUEUE_NAME,
                                                                         new NotificationQueueHandler() {
                                                                             @Override
@@ -85,14 +82,14 @@ public class Janitor {
 
                                                                                 }
                                                                                 final JanitorNotificationKey janitorKey = (JanitorNotificationKey) notificationKey;
-                                                                                if (janitorKey.getTaskName().equals(incompletePaymentTransactionTask.getClass().toString())) {
-                                                                                    incompletePaymentTransactionTask.processNotification(janitorKey, userToken, accountRecordId, tenantRecordId);
+                                                                                // Backward compatibility: keep the class name as-is
+                                                                                if (janitorKey.getTaskName().equals(IncompletePaymentTransactionTask.class.toString())) {
+                                                                                    incompletePaymentAttemptTask.processNotification(janitorKey, userToken, accountRecordId, tenantRecordId);
                                                                                 }
                                                                             }
                                                                         }
                                                                        );
 
-        incompletePaymentTransactionTask.attachJanitorQueue(janitorQueue);
         incompletePaymentAttemptTask.attachJanitorQueue(janitorQueue);
     }
 
@@ -100,7 +97,6 @@ public class Janitor {
         this.isStopped = false;
 
         incompletePaymentAttemptTask.start();
-        incompletePaymentTransactionTask.start();
 
         janitorExecutor = paymentExecutors.getJanitorExecutorService();
 
@@ -110,11 +106,6 @@ public class Janitor {
         final TimeUnit attemptCompletionRateUnit = paymentConfig.getJanitorRunningRate().getUnit();
         final long attemptCompletionPeriod = paymentConfig.getJanitorRunningRate().getPeriod();
         janitorExecutor.scheduleAtFixedRate(incompletePaymentAttemptTask, attemptCompletionPeriod, attemptCompletionPeriod, attemptCompletionRateUnit);
-
-        // Start task for completing incomplete payment attempts
-        final TimeUnit erroredCompletionRateUnit = paymentConfig.getJanitorRunningRate().getUnit();
-        final long erroredCompletionPeriod = paymentConfig.getJanitorRunningRate().getPeriod();
-        janitorExecutor.scheduleAtFixedRate(incompletePaymentTransactionTask, erroredCompletionPeriod, erroredCompletionPeriod, erroredCompletionRateUnit);
     }
 
     public void stop() throws NoSuchNotificationQueue {
@@ -124,7 +115,6 @@ public class Janitor {
         }
 
         incompletePaymentAttemptTask.stop();
-        incompletePaymentTransactionTask.stop();
 
         try {
             /* Previously submitted tasks will be executed with shutdown(); when task executes as a result of shutdown being called
@@ -140,7 +130,7 @@ public class Janitor {
 
             if (janitorQueue != null) {
                 janitorQueue.stopQueue();
-                notificationQueueService.deleteNotificationQueue(DefaultPaymentService.SERVICE_NAME, QUEUE_NAME);
+                notificationQueueService.deleteNotificationQueue(KILLBILL_SERVICES.PAYMENT_SERVICE.getServiceName(), QUEUE_NAME);
             }
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -151,7 +141,6 @@ public class Janitor {
     }
 
     public void processPaymentEvent(final PaymentInternalEvent event) {
-        incompletePaymentAttemptTask.processPaymentEvent(event, janitorQueue);
-        incompletePaymentTransactionTask.processPaymentEvent(event, janitorQueue);
+        incompletePaymentAttemptTask.processPaymentEvent(event);
     }
 }

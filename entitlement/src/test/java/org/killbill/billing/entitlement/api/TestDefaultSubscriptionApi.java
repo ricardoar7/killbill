@@ -39,6 +39,7 @@ import org.killbill.billing.entitlement.api.Entitlement.EntitlementActionPolicy;
 import org.killbill.billing.entitlement.api.Entitlement.EntitlementState;
 import org.killbill.billing.junction.DefaultBlockingState;
 import org.killbill.billing.payment.api.PluginProperty;
+import org.killbill.billing.platform.api.KillbillService.KILLBILL_SERVICES;
 import org.killbill.billing.util.api.AuditLevel;
 import org.killbill.billing.util.audit.AuditLog;
 import org.killbill.billing.util.audit.ChangeType;
@@ -64,11 +65,8 @@ public class TestDefaultSubscriptionApi extends EntitlementTestSuiteWithEmbedded
         testListener.pushExpectedEvents(NextEvent.CREATE, NextEvent.BLOCK);
         final UUID entitlement1Id = entitlementApi.createBaseEntitlement(account.getId(), new DefaultEntitlementSpecifier(spec), UUID.randomUUID().toString(), null, null, false, true, ImmutableList.<PluginProperty>of(), callContext);
         final Entitlement entitlement1 = entitlementApi.getEntitlementForId(entitlement1Id, callContext);
-        // Sleep 1 sec so created date are apart from each other and ordering in the bundle does not default on the UUID which is random.
-        try {
-            Thread.sleep(1000);
-        } catch (InterruptedException ignore) {
-        }
+        // Move the clock 1.5 sec so the (truncated) created date are apart from each other and ordering in the bundle does not default on the UUID which is random.
+        clock.addDeltaFromReality(1500);
         testListener.pushExpectedEvents(NextEvent.CREATE, NextEvent.BLOCK);
         final UUID entitlement2Id = entitlementApi.createBaseEntitlement(account.getId(), new DefaultEntitlementSpecifier(spec), UUID.randomUUID().toString(), null, null, false, true, ImmutableList.<PluginProperty>of(), callContext);
         assertListenerStatus();
@@ -351,7 +349,7 @@ public class TestDefaultSubscriptionApi extends EntitlementTestSuiteWithEmbedded
         final Iterable<BlockingState> iterableForCreateState = subscriptionApi.getBlockingStates(account.getId(), ImmutableList.of(BlockingStateType.SUBSCRIPTION), null, OrderingType.ASCENDING, SubscriptionApi.ALL_EVENTS, callContext);
         assertTrue(iterableForCreateState.iterator().hasNext());
         final BlockingState createState = iterableForCreateState.iterator().next();
-        assertEquals(createState.getService(), EntitlementService.ENTITLEMENT_SERVICE_NAME);
+        assertEquals(createState.getService(), KILLBILL_SERVICES.ENTITLEMENT_SERVICE.getServiceName());
         assertListenerStatus();
 
         testListener.pushExpectedEvent(NextEvent.BLOCK);

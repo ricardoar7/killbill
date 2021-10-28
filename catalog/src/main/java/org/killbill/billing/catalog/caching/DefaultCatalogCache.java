@@ -18,6 +18,7 @@
 package org.killbill.billing.catalog.caching;
 
 import java.util.List;
+import java.util.Set;
 
 import javax.inject.Inject;
 
@@ -51,9 +52,9 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 
-public class EhCacheCatalogCache implements CatalogCache {
+public class DefaultCatalogCache implements CatalogCache {
 
-    private final Logger logger = LoggerFactory.getLogger(EhCacheCatalogCache.class);
+    private final Logger logger = LoggerFactory.getLogger(DefaultCatalogCache.class);
 
     private final CacheController<Long, DefaultVersionedCatalog> cacheController;
     private final VersionedCatalogLoader loader;
@@ -67,7 +68,7 @@ public class EhCacheCatalogCache implements CatalogCache {
     private DefaultVersionedCatalog defaultCatalog;
 
     @Inject
-    public EhCacheCatalogCache(final OSGIServiceRegistration<CatalogPluginApi> pluginRegistry,
+    public DefaultCatalogCache(final OSGIServiceRegistration<CatalogPluginApi> pluginRegistry,
                                final VersionedCatalogMapper versionedCatalogMapper,
                                final CacheControllerDispatcher cacheControllerDispatcher,
                                final VersionedCatalogLoader loader,
@@ -127,6 +128,11 @@ public class EhCacheCatalogCache implements CatalogCache {
                 }
                 cacheController.putIfAbsent(tenantContext.getTenantRecordId(), tenantCatalog);
             }
+
+            if (tenantCatalog != null) {
+                initializeCatalog(tenantCatalog);
+            }
+
             return tenantCatalog;
         } catch (final IllegalStateException e) {
             throw new CatalogApiException(ErrorCode.CAT_INVALID_FOR_TENANT, tenantContext.getTenantRecordId());
@@ -142,7 +148,8 @@ public class EhCacheCatalogCache implements CatalogCache {
 
     private DefaultVersionedCatalog getCatalogFromPlugins(final InternalTenantContext internalTenantContext) throws CatalogApiException {
         final TenantContext tenantContext = internalCallContextFactory.createTenantContext(internalTenantContext);
-        for (final String service : pluginRegistry.getAllServices()) {
+        final Set<String> allServices = pluginRegistry.getAllServices();
+        for (final String service : allServices) {
             final CatalogPluginApi plugin = pluginRegistry.getServiceForName(service);
 
             //
@@ -153,11 +160,12 @@ public class EhCacheCatalogCache implements CatalogCache {
             // (e.g deleted Plans...), then multiple versions must be returned.
             //
             final DateTime latestCatalogUpdatedDate = plugin.getLatestCatalogVersion(ImmutableList.<PluginProperty>of(), tenantContext);
-            // A null latestCatalogUpdatedDate by passing caching, by fetching full catalog from plugin below (compatibility mode with 0.18.x or non optimized plugin api mode)
-            //
-            if (latestCatalogUpdatedDate != null) {
+            // A null latestCatalogUpdatedDate bypasses caching, by fetching full catalog from plugin below (compatibility mode with 0.18.x or non optimized plugin api mode)
+            final boolean cacheable = latestCatalogUpdatedDate != null;
+            if (cacheable) {
                 final DefaultVersionedCatalog tenantCatalog = cacheController.get(internalTenantContext.getTenantRecordId(), cacheLoaderArgument);
                 if (tenantCatalog != null) {
+                    initializeCatalog(tenantCatalog);
                     if (tenantCatalog.getEffectiveDate().compareTo(latestCatalogUpdatedDate.toDate()) == 0) {
                         // Current cached version matches the one from the plugin
                         return tenantCatalog;
@@ -168,21 +176,41 @@ public class EhCacheCatalogCache implements CatalogCache {
             final VersionedPluginCatalog pluginCatalog = plugin.getVersionedPluginCatalog(ImmutableList.<PluginProperty>of(), tenantContext);
             // First plugin that gets something (for that tenant) returns it
             if (pluginCatalog != null) {
-                logger.info("Returning catalog from plugin {} on tenant {} ", service, internalTenantContext.getTenantRecordId());
+                // The log entry is only interesting if there are multiple plugins
+                if (allServices.size() > 1) {
+                    logger.info("Returning catalog from plugin {} on tenant {} ", service, internalTenantContext.getTenantRecordId());
+                }
+
                 final DefaultVersionedCatalog resolvedPluginCatalog = versionedCatalogMapper.toVersionedCatalog(pluginCatalog, internalTenantContext);
+
+                // Always clear the cache for safety
                 cacheController.remove(internalTenantContext.getTenantRecordId());
-                cacheController.putIfAbsent(internalTenantContext.getTenantRecordId(), resolvedPluginCatalog);
+                if (cacheable) {
+                    cacheController.putIfAbsent(internalTenantContext.getTenantRecordId(), resolvedPluginCatalog);
+                }
+
                 return resolvedPluginCatalog;
             }
         }
         return null;
     }
 
+    private void initializeCatalog(final DefaultVersionedCatalog tenantCatalog) {
+        tenantCatalog.initialize(defaultCatalog.getClock(), tenantCatalog);
+        for (final StandaloneCatalog cur : tenantCatalog.getVersions()) {
+            if (cur instanceof StandaloneCatalogWithPriceOverride) {
+                ((StandaloneCatalogWithPriceOverride) cur).initialize(cur, priceOverride, internalCallContextFactory);
+            } else {
+                cur.initialize(cur);
+            }
+        }
+    }
+
     //
     // Build the LoaderCallback that is required to build the catalog from the xml from a module that knows
     // nothing about catalog.
     //
-    // This is a contract between the TenantCatalogCacheLoader and the EhCacheCatalogCache
+    // This is a contract between the TenantCatalogCacheLoader and the DefaultCatalogCache
     private CacheLoaderArgument initializeCacheLoaderArgument(final boolean filterTemplateCatalog) {
         final LoaderCallback loaderCallback = new LoaderCallback() {
             @Override

@@ -31,12 +31,11 @@ import org.killbill.billing.callcontext.InternalTenantContext;
 import org.killbill.billing.catalog.api.BillingActionPolicy;
 import org.killbill.billing.catalog.api.Catalog;
 import org.killbill.billing.catalog.api.CatalogApiException;
-import org.killbill.billing.catalog.api.PlanPhasePriceOverride;
-import org.killbill.billing.catalog.api.PlanPhaseSpecifier;
 import org.killbill.billing.entitlement.api.EntitlementAOStatusDryRun;
 import org.killbill.billing.entitlement.api.EntitlementSpecifier;
 import org.killbill.billing.events.EffectiveSubscriptionInternalEvent;
 import org.killbill.billing.invoice.api.DryRunArguments;
+import org.killbill.billing.subscription.api.user.SubscriptionBillingEvent;
 import org.killbill.billing.subscription.api.user.SubscriptionBaseApiException;
 import org.killbill.billing.subscription.api.user.SubscriptionBaseBundle;
 import org.killbill.billing.util.entity.Pagination;
@@ -47,7 +46,7 @@ public interface SubscriptionBaseInternalApi {
                                                                               boolean renameCancelledBundleIfExist,
                                                                               InternalCallContext contextWithValidAccountRecordId) throws SubscriptionBaseApiException;
 
-    public void cancelBaseSubscriptions(Iterable<SubscriptionBase> subscriptions, BillingActionPolicy policy, int accountBillCycleDayLocal, InternalCallContext context) throws SubscriptionBaseApiException;
+    public void cancelBaseSubscriptions(Iterable<SubscriptionBase> subscriptions, BillingActionPolicy policy, InternalCallContext context) throws SubscriptionBaseApiException;
 
     //@VisibleForTesting
     SubscriptionBaseBundle createBundleForAccount(UUID accountId, String bundleName, boolean renameCancelledBundleIfExist, InternalCallContext context)
@@ -83,7 +82,7 @@ public interface SubscriptionBaseInternalApi {
 
     public List<EffectiveSubscriptionInternalEvent> getAllTransitions(SubscriptionBase subscription, InternalTenantContext context);
 
-    public List<EffectiveSubscriptionInternalEvent> getBillingTransitions(SubscriptionBase subscription, InternalTenantContext context);
+    public List<SubscriptionBillingEvent> getSubscriptionBillingEvents(SubscriptionBase subscription, InternalTenantContext context);
 
     public DateTime getDryRunChangePlanEffectiveDate(SubscriptionBase subscription, EntitlementSpecifier spec, DateTime requestedDate, BillingActionPolicy policy, InternalCallContext context) throws SubscriptionBaseApiException, CatalogApiException;
 
@@ -93,8 +92,6 @@ public interface SubscriptionBaseInternalApi {
     public void updateExternalKey(UUID bundleId, String newExternalKey, InternalCallContext context);
 
     public void updateBCD(final UUID subscriptionId, final int bcd, @Nullable final LocalDate effectiveFromDate, final InternalCallContext internalCallContext) throws SubscriptionBaseApiException;
-
-    public int getDefaultBillCycleDayLocal(final Map<UUID, Integer> bcdCache, final SubscriptionBase subscription, final SubscriptionBase baseSubscription, final PlanPhaseSpecifier planPhaseSpecifier, final int accountBillCycleDayLocal, final Catalog catalog, final InternalTenantContext context) throws SubscriptionBaseApiException;
 
     public UUID getAccountIdFromBundleId(UUID bundleId, InternalTenantContext context) throws SubscriptionBaseApiException;
 

@@ -27,6 +27,7 @@ import javax.inject.Inject;
 import org.joda.time.DateTime;
 import org.joda.time.LocalDate;
 import org.killbill.billing.account.api.Account;
+import org.killbill.billing.account.api.AccountData;
 import org.killbill.billing.api.TestApiListener.NextEvent;
 import org.killbill.billing.beatrix.util.InvoiceChecker.ExpectedInvoiceItemCheck;
 import org.killbill.billing.catalog.DefaultPlanPhasePriceOverride;
@@ -54,11 +55,13 @@ import com.google.common.collect.ImmutableList;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertNull;
 
 public class TestWithBCDUpdate extends TestIntegrationBase {
 
     @Inject
     protected SubscriptionBaseInternalApi subscriptionBaseInternalApi;
+
 
 
     @Test(groups = "slow")
@@ -122,7 +125,6 @@ public class TestWithBCDUpdate extends TestIntegrationBase {
         assertEquals(subscription.getEffectiveEndDate().compareTo(new LocalDate(2016, 5, 18)), 0);
         assertEquals(subscription.getBillingEndDate().compareTo(new LocalDate(2016, 5, 15)), 0);
     }
-
 
     @Test(groups = "slow")
     public void testBCDChangeAfterTrialFollowOtherBCDChange() throws Exception {
@@ -203,7 +205,6 @@ public class TestWithBCDUpdate extends TestIntegrationBase {
 
     }
 
-
     @Test(groups = "slow")
     public void testBCDChangeBeforeChangePlan() throws Exception {
 
@@ -249,7 +250,6 @@ public class TestWithBCDUpdate extends TestIntegrationBase {
         expectedInvoices.clear();
 
     }
-
 
     @Test(groups = "slow")
     public void testBCDChangeAfterChangePlan() throws Exception {
@@ -346,7 +346,6 @@ public class TestWithBCDUpdate extends TestIntegrationBase {
         expectedInvoices.clear();
 
     }
-
 
     @Test(groups = "slow")
     public void testBCDChangeForAO() throws Exception {
@@ -494,7 +493,6 @@ public class TestWithBCDUpdate extends TestIntegrationBase {
         expectedInvoices.clear();
     }
 
-
     @Test(groups = "slow")
     public void testBCDChangeWithEffectiveDateFromInTheFuture() throws Exception {
 
@@ -638,6 +636,8 @@ public class TestWithBCDUpdate extends TestIntegrationBase {
         // BP creation : Will set Account BCD to the first (DateOfFirstRecurringNonZeroCharge is the subscription start date in this case)
         final UUID baseEntitlementId = entitlementApi.createBaseEntitlement(account.getId(), new DefaultEntitlementSpecifier(spec, null, overrides), "bundleExternalKey", null, null, false, true, ImmutableList.<PluginProperty>of(), callContext);
         assertListenerStatus();
+        final Account accountBCD = accountUserApi.getAccountById(account.getId(), callContext);
+        assertEquals(accountBCD.getBillCycleDayLocal(), (Integer) 1);
         final Entitlement baseEntitlement = entitlementApi.getEntitlementForId(baseEntitlementId, callContext);
 
         invoiceChecker.checkInvoice(account.getId(), 1, callContext,
@@ -741,8 +741,6 @@ public class TestWithBCDUpdate extends TestIntegrationBase {
                                     new ExpectedInvoiceItemCheck(new LocalDate(2016, 6, 15), new LocalDate(2016, 7, 15), InvoiceItemType.RECURRING, new BigDecimal("29.95")));
     }
 
-
-
     @Test(groups = "slow")
     public void testWithBCDOnOperations() throws Exception {
 
@@ -791,6 +789,107 @@ public class TestWithBCDUpdate extends TestIntegrationBase {
         invoiceChecker.checkInvoice(account.getId(), 3, callContext,
                                     new ExpectedInvoiceItemCheck(new LocalDate(2018, 8, 15), new LocalDate(2018, 8, 21), InvoiceItemType.RECURRING, new BigDecimal("5.80")));
 
+
+    }
+
+    @Test(groups = "slow")
+    public void testBCDChangeForConsumableInArrearPlan() throws Exception {
+        // We take april as it has 30 days (easier to play with BCD)
+        // Set clock to the initial start date - we implicitly assume here that the account timezone is UTC
+        clock.setDay(new LocalDate(2012, 4, 1));
+
+        final AccountData accountData = getAccountData(1);
+        final Account account = createAccountWithNonOsgiPaymentMethod(accountData);
+        accountChecker.checkAccount(account.getId(), accountData, callContext);
+
+        // Create BASE subscription
+        final DefaultEntitlement bpSubscription = createBaseEntitlementAndCheckForCompletion(account.getId(), "bundleKey", "Shotgun", ProductCategory.BASE, BillingPeriod.ANNUAL, NextEvent.CREATE, NextEvent.BLOCK, NextEvent.INVOICE);
+        // Check bundle after BP got created otherwise we get an error from auditApi.
+        subscriptionChecker.checkSubscriptionCreated(bpSubscription.getId(), internalCallContext);
+        invoiceChecker.checkInvoice(account.getId(), 1, callContext, new ExpectedInvoiceItemCheck(new LocalDate(2012, 4, 1), null, InvoiceItemType.FIXED, new BigDecimal("0")));
+        assertListenerStatus();
+
+        // Add ADD_ON on the same day
+        final DefaultEntitlement aoSubscription = addAOEntitlementAndCheckForCompletion(bpSubscription.getBundleId(), "Bullets", ProductCategory.ADD_ON, BillingPeriod.NO_BILLING_PERIOD, NextEvent.CREATE, NextEvent.BLOCK, NextEvent.NULL_INVOICE);
+        assertListenerStatus();
+        assertNull(bpSubscription.getSubscriptionBase().getChargedThroughDate());
+
+        // Record usage for first month
+        recordUsageData(aoSubscription.getId(), "tracking-1", "bullets", new LocalDate(2012, 4, 5), 100L, callContext);
+        recordUsageData(aoSubscription.getId(), "tracking-2", "bullets", new LocalDate(2012, 4, 15), 100L, callContext);
+
+        // 2012-05-01
+        busHandler.pushExpectedEvents(NextEvent.PHASE, NextEvent.NULL_INVOICE, NextEvent.INVOICE, NextEvent.PAYMENT, NextEvent.INVOICE_PAYMENT);
+        clock.addMonths(1);
+        assertListenerStatus();
+
+        invoiceChecker.checkInvoice(account.getId(), 2, callContext,
+                                    new ExpectedInvoiceItemCheck(new LocalDate(2012, 5, 1), new LocalDate(2013, 5, 1), InvoiceItemType.RECURRING, new BigDecimal("2399.95")),
+                                    new ExpectedInvoiceItemCheck(new LocalDate(2012, 4, 1), new LocalDate(2012, 5, 1), InvoiceItemType.USAGE, new BigDecimal("5.90")));
+
+        final DateTime bpExpectedCTD = new DateTime("2013-05-01T00:00:00.000Z");
+        assertEquals(subscriptionBaseInternalApiApi.getSubscriptionFromId(bpSubscription.getId(), internalCallContext).getChargedThroughDate().compareTo(bpExpectedCTD), 0);
+        DateTime aoExpectedCTD = new DateTime("2012-05-01T00:00:00.000Z");
+        assertEquals(subscriptionBaseInternalApiApi.getSubscriptionFromId(aoSubscription.getId(), internalCallContext).getChargedThroughDate().compareTo(aoExpectedCTD), 0);
+
+        // 2012-05-05
+        clock.addDays(4);
+        assertListenerStatus();
+
+        // Set BCD to be the 5
+        busHandler.pushExpectedEvents(NextEvent.BCD_CHANGE, NextEvent.INVOICE);
+        subscriptionBaseInternalApi.updateBCD(aoSubscription.getId(), 5, null, internalCallContext);
+        assertListenerStatus();
+
+        invoiceChecker.checkInvoice(account.getId(), 3, callContext,
+                                    new ExpectedInvoiceItemCheck(new LocalDate(2012, 5, 1), new LocalDate(2012, 5, 5), InvoiceItemType.USAGE, BigDecimal.ZERO));
+
+        // Record usage for second month
+        recordUsageData(aoSubscription.getId(), "tracking-3", "bullets", new LocalDate(2012, 5, 5), 100L, callContext);
+        recordUsageData(aoSubscription.getId(), "tracking-4", "bullets", new LocalDate(2012, 6, 4), 100L, callContext);
+
+        // 2012-06-01
+        busHandler.pushExpectedEvents(NextEvent.NULL_INVOICE);
+        clock.addDays(27);
+        assertListenerStatus();
+
+        // 2012-06-05
+        busHandler.pushExpectedEvents(NextEvent.INVOICE, NextEvent.PAYMENT, NextEvent.INVOICE_PAYMENT);
+        clock.addDays(4);
+        assertListenerStatus();
+
+        invoiceChecker.checkInvoice(account.getId(), 4, callContext,
+                                    new ExpectedInvoiceItemCheck(new LocalDate(2012, 5, 5), new LocalDate(2012, 6, 5), InvoiceItemType.USAGE, new BigDecimal("5.90")));
+
+        aoExpectedCTD = new DateTime("2012-06-05T00:00:00.000Z");
+        assertEquals(subscriptionBaseInternalApiApi.getSubscriptionFromId(aoSubscription.getId(), internalCallContext).getChargedThroughDate().compareTo(aoExpectedCTD), 0);
+    }
+
+
+    @Test(groups = "slow")
+    public void testWithOverrideFixedPriceAndNewBCD() throws Exception {
+
+        final DateTime initialDate = new DateTime(2016, 4, 1, 0, 13, 42, 0, testTimeZone);
+        clock.setTime(initialDate);
+
+        final Account account = createAccountWithNonOsgiPaymentMethod(getAccountData(0));
+        assertNotNull(account);
+
+        // Price override of $10 for fixed and $0 for recurring
+        // Override BCD as well
+        final Integer billCycleDay = 1;
+        final PlanPhaseSpecifier spec = new PlanPhaseSpecifier("Blowdart", BillingPeriod.QUARTERLY, "notrial", null);
+        final List<PlanPhasePriceOverride> overrides = new ArrayList<PlanPhasePriceOverride>();
+        overrides.add(new DefaultPlanPhasePriceOverride("blowdart-quarterly-notrial-evergreen", account.getCurrency(), BigDecimal.TEN, BigDecimal.ZERO, ImmutableList.<UsagePriceOverride>of()));
+        final DefaultEntitlementSpecifier entitlementSpecifier = new DefaultEntitlementSpecifier(spec, billCycleDay, overrides);
+
+        busHandler.pushExpectedEvents(NextEvent.CREATE, NextEvent.BLOCK, NextEvent.BCD_CHANGE, NextEvent.NULL_INVOICE, NextEvent.INVOICE, NextEvent.INVOICE_PAYMENT, NextEvent.PAYMENT);
+        entitlementApi.createBaseEntitlement(account.getId(), entitlementSpecifier, "134582864", null, null, false, true, ImmutableList.<PluginProperty>of(), callContext);
+        assertListenerStatus();
+
+        invoiceChecker.checkInvoice(account.getId(), 1, callContext,
+                                    new ExpectedInvoiceItemCheck(new LocalDate(2016, 4, 1), null, InvoiceItemType.FIXED, BigDecimal.TEN),
+                                    new ExpectedInvoiceItemCheck(new LocalDate(2016, 4, 1), new LocalDate(2016, 7, 1), InvoiceItemType.RECURRING, BigDecimal.ZERO));
 
     }
 }

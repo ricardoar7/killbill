@@ -1,6 +1,6 @@
 /*
- * Copyright 2014-2018 Groupon, Inc
- * Copyright 2014-2018 The Billing Project, LLC
+ * Copyright 2014-2020 Groupon, Inc
+ * Copyright 2014-2020 The Billing Project, LLC
  *
  * The Billing Project licenses this file to you under the Apache License, version 2.0
  * (the "License"); you may not use this file except in compliance with the
@@ -22,10 +22,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
+import org.awaitility.Awaitility;
 import org.joda.time.LocalDate;
 import org.killbill.billing.account.api.Account;
 import org.killbill.billing.api.FlakyRetryAnalyzer;
@@ -47,13 +49,13 @@ import org.killbill.billing.payment.bus.PaymentBusEventHandler;
 import org.killbill.billing.payment.core.janitor.Janitor;
 import org.killbill.billing.payment.dao.PaymentAttemptModelDao;
 import org.killbill.billing.payment.dao.PaymentTransactionModelDao;
-import org.killbill.billing.payment.glue.DefaultPaymentService;
 import org.killbill.billing.payment.invoice.InvoicePaymentControlPluginApi;
 import org.killbill.billing.payment.plugin.api.PaymentPluginStatus;
 import org.killbill.billing.payment.plugin.api.PaymentTransactionInfoPlugin;
 import org.killbill.billing.payment.provider.DefaultNoOpPaymentInfoPlugin;
 import org.killbill.billing.payment.provider.MockPaymentProviderPlugin;
 import org.killbill.billing.platform.api.KillbillConfigSource;
+import org.killbill.billing.platform.api.KillbillService.KILLBILL_SERVICES;
 import org.killbill.billing.util.api.AuditLevel;
 import org.killbill.billing.util.audit.AuditLogWithHistory;
 import org.killbill.billing.util.callcontext.InternalCallContextFactory;
@@ -73,13 +75,13 @@ import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.inject.Inject;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.awaitility.Awaitility.await;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNull;
 import static org.testng.Assert.fail;
 
 public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
@@ -111,12 +113,12 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
     private Account account;
 
     @Override
-    protected KillbillConfigSource getConfigSource() {
-        return getConfigSource("/payment.properties",
-                               ImmutableMap.<String, String>of("org.killbill.payment.provider.default", MockPaymentProviderPlugin.PLUGIN_NAME,
-                                                               "killbill.payment.engine.events.off", "false",
-                                                               "org.killbill.payment.janitor.rate", "500ms")
-                              );
+    protected KillbillConfigSource getConfigSource(final Map<String, String> extraProperties) {
+        final Map<String, String> allExtraProperties = new HashMap<String, String>(extraProperties);
+        allExtraProperties.put("org.killbill.payment.provider.default", MockPaymentProviderPlugin.PLUGIN_NAME);
+        allExtraProperties.put("killbill.payment.engine.events.off", "false");
+        allExtraProperties.put("org.killbill.payment.janitor.rate", "500ms");
+        return getConfigSource("/payment.properties", allExtraProperties);
     }
 
     @Override
@@ -141,9 +143,6 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
 
         super.beforeMethod();
 
-        retryService.initialize();
-        retryService.start();
-
         eventBus.register(handler);
         testListener.reset();
         eventBus.register(testListener);
@@ -156,8 +155,6 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
         if (hasFailed()) {
             return;
         }
-
-        retryService.stop();
 
         eventBus.unregister(handler);
         eventBus.unregister(testListener);
@@ -214,20 +211,38 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
 
         final PaymentAttemptModelDao attempt = attempts.get(0);
         assertEquals(attempt.getStateName(), "SUCCESS");
+        assertEquals(attempt.getAmount().compareTo(requestedAmount), 0);
+        assertEquals(attempt.getCurrency(), Currency.USD);
 
         // Ok now the fun part starts... we modify the attempt state to be 'INIT' and wait the the Janitor to do its job.
-        paymentDao.updatePaymentAttempt(attempt.getId(), attempt.getTransactionId(), "INIT", internalCallContext);
+        paymentDao.updatePaymentAttemptWithProperties(attempt.getId(),
+                                                      attempt.getPaymentMethodId(),
+                                                      attempt.getTransactionId(),
+                                                      "INIT",
+                                                      null,
+                                                      null,
+                                                      null,
+                                                      internalCallContext);
         final PaymentAttemptModelDao attempt2 = paymentDao.getPaymentAttempt(attempt.getId(), internalCallContext);
         assertEquals(attempt2.getStateName(), "INIT");
+        assertNull(attempt2.getAmount());
+        assertNull(attempt2.getCurrency());
 
         clock.addDays(1);
-        try {
-            Thread.sleep(1500);
-        } catch (InterruptedException e) {
-        }
+        Awaitility.await()
+                  .atMost(5, TimeUnit.SECONDS)
+                  .until(new Callable<Boolean>() {
+                      @Override
+                      public Boolean call() throws Exception {
+                          final PaymentAttemptModelDao attempt3 = paymentDao.getPaymentAttempt(attempt.getId(), internalCallContext);
+                          return "SUCCESS".equals(attempt3.getStateName());
+                      }
+                  });
 
         final PaymentAttemptModelDao attempt3 = paymentDao.getPaymentAttempt(attempt.getId(), internalCallContext);
         assertEquals(attempt3.getStateName(), "SUCCESS");
+        assertEquals(attempt3.getAmount().compareTo(requestedAmount), 0);
+        assertEquals(attempt3.getCurrency(), Currency.USD);
     }
 
     @Test(groups = "slow")
@@ -292,11 +307,22 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
 
         final PaymentAttemptModelDao refundAttempt = attempts.get(1);
         assertEquals(refundAttempt.getTransactionType(), TransactionType.REFUND);
+        assertEquals(refundAttempt.getAmount().compareTo(BigDecimal.ONE), 0);
+        assertEquals(refundAttempt.getCurrency(), Currency.USD);
 
         // Ok now the fun part starts... we modify the attempt state to be 'INIT' and wait the the Janitor to do its job.
-        paymentDao.updatePaymentAttempt(refundAttempt.getId(), refundAttempt.getTransactionId(), "INIT", internalCallContext);
+        paymentDao.updatePaymentAttemptWithProperties(refundAttempt.getId(),
+                                                      refundAttempt.getPaymentMethodId(),
+                                                      refundAttempt.getTransactionId(),
+                                                      "INIT",
+                                                      null,
+                                                      null,
+                                                      null,
+                                                      internalCallContext);
         final PaymentAttemptModelDao attempt2 = paymentDao.getPaymentAttempt(refundAttempt.getId(), internalCallContext);
         assertEquals(attempt2.getStateName(), "INIT");
+        assertNull(attempt2.getAmount());
+        assertNull(attempt2.getCurrency());
 
         clock.addDays(1);
 
@@ -307,6 +333,11 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
                 return "SUCCESS".equals(attempt3.getStateName());
             }
         });
+
+        final PaymentAttemptModelDao refundAttempt2 = paymentDao.getPaymentAttempt(refundAttempt.getId(), internalCallContext);
+        assertEquals(refundAttempt2.getStateName(), "SUCCESS");
+        assertEquals(refundAttempt2.getAmount().compareTo(BigDecimal.ONE), 0);
+        assertEquals(refundAttempt2.getCurrency(), Currency.USD);
     }
 
     @Test(groups = "slow")
@@ -475,7 +506,6 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
 
         final String paymentStateName = paymentSMHelper.getPendingStateForTransaction(TransactionType.AUTHORIZE).toString();
 
-
         testListener.pushExpectedEvent(NextEvent.PAYMENT);
         paymentDao.updatePaymentAndTransactionOnCompletion(account.getId(), null, payment.getId(), TransactionType.AUTHORIZE, paymentStateName, paymentStateName,
                                                            payment.getTransactions().get(0).getId(), TransactionStatus.PENDING, requestedAmount, account.getCurrency(),
@@ -554,7 +584,7 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
                 @Override
                 public Boolean call() throws Exception {
                     boolean completed = true;
-                    final Iterator<NotificationEventWithMetadata<NotificationEvent>> iterator = notificationQueueService.getNotificationQueue(DefaultPaymentService.SERVICE_NAME, Janitor.QUEUE_NAME).getFutureOrInProcessingNotificationForSearchKeys(internalCallContext.getAccountRecordId(), internalCallContext.getTenantRecordId()).iterator();
+                    final Iterator<NotificationEventWithMetadata<NotificationEvent>> iterator = notificationQueueService.getNotificationQueue(KILLBILL_SERVICES.PAYMENT_SERVICE.getServiceName(), Janitor.QUEUE_NAME).getFutureOrInProcessingNotificationForSearchKeys(internalCallContext.getAccountRecordId(), internalCallContext.getTenantRecordId()).iterator();
                     try {
                         while (iterator.hasNext()) {
                             final NotificationEventWithMetadata<NotificationEvent> notificationEvent = iterator.next();
@@ -578,7 +608,7 @@ public class TestJanitor extends PaymentTestSuiteWithEmbeddedDB {
 
     private int getPendingNotificationCnt(final InternalCallContext internalCallContext) {
         try {
-            return Iterables.size(notificationQueueService.getNotificationQueue(DefaultPaymentService.SERVICE_NAME, Janitor.QUEUE_NAME).getFutureOrInProcessingNotificationForSearchKeys(internalCallContext.getAccountRecordId(), internalCallContext.getTenantRecordId()));
+            return Iterables.size(notificationQueueService.getNotificationQueue(KILLBILL_SERVICES.PAYMENT_SERVICE.getServiceName(), Janitor.QUEUE_NAME).getFutureOrInProcessingNotificationForSearchKeys(internalCallContext.getAccountRecordId(), internalCallContext.getTenantRecordId()));
         } catch (final Exception e) {
             fail("Test failed ", e);
         }

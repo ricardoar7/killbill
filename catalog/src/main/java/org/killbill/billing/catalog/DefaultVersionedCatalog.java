@@ -22,7 +22,6 @@ import java.io.Externalizable;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -43,7 +42,6 @@ import org.joda.time.DateTime;
 import org.killbill.billing.ErrorCode;
 import org.killbill.billing.catalog.api.BillingActionPolicy;
 import org.killbill.billing.catalog.api.BillingAlignment;
-import org.killbill.billing.catalog.api.Catalog;
 import org.killbill.billing.catalog.api.CatalogApiException;
 import org.killbill.billing.catalog.api.Currency;
 import org.killbill.billing.catalog.api.Listing;
@@ -60,9 +58,6 @@ import org.killbill.billing.catalog.api.Product;
 import org.killbill.billing.catalog.api.StaticCatalog;
 import org.killbill.billing.catalog.api.Unit;
 import org.killbill.billing.catalog.api.VersionedCatalog;
-import org.killbill.billing.util.cache.ExternalizableInput;
-import org.killbill.billing.util.cache.ExternalizableOutput;
-import org.killbill.billing.util.cache.MapperHolder;
 import org.killbill.clock.Clock;
 import org.killbill.xmlloader.ValidatingConfig;
 import org.killbill.xmlloader.ValidationError;
@@ -74,7 +69,7 @@ public class DefaultVersionedCatalog extends ValidatingConfig<DefaultVersionedCa
 
     private static final long serialVersionUID = 3181874902672322725L;
 
-    private final Clock clock;
+    private Clock clock;
 
     @XmlElementWrapper(name = "versions", required = true)
     @XmlElement(name = "version", required = true)
@@ -129,7 +124,7 @@ public class DefaultVersionedCatalog extends ValidatingConfig<DefaultVersionedCa
 
     private CatalogPlanEntry findCatalogPlanEntry(final PlanRequestWrapper wrapper,
                                                   final DateTime requestedDate,
-                                                  final DateTime subscriptionStartDate) throws CatalogApiException {
+                                                  final DateTime subscriptionChangePlanDate) throws CatalogApiException {
         final List<StandaloneCatalog> catalogs = versionsBeforeDate(requestedDate.toDate());
         if (catalogs.isEmpty()) {
             throw new CatalogApiException(ErrorCode.CAT_NO_CATALOG_FOR_GIVEN_DATE, requestedDate.toDate().toString());
@@ -154,14 +149,14 @@ public class DefaultVersionedCatalog extends ValidatingConfig<DefaultVersionedCa
 
             final boolean oldestCatalog = (i == 0);
             final DateTime catalogEffectiveDate = CatalogDateHelper.toUTCDateTime(c.getEffectiveDate());
-            final boolean catalogOlderThanSubscriptionStartDate = !subscriptionStartDate.isBefore(catalogEffectiveDate);
+            final boolean catalogOlderThanSubscriptionChangePlanDate = !subscriptionChangePlanDate.isBefore(catalogEffectiveDate);
             if (oldestCatalog || // Prevent issue with time granularity -- see #760
-                catalogOlderThanSubscriptionStartDate) { // It's a new subscription, this plan always applies
+                catalogOlderThanSubscriptionChangePlanDate) { // It's a new subscription, this plan always applies
                 return new CatalogPlanEntry(c, plan);
             } else { // It's an existing subscription
                 if (plan.getEffectiveDateForExistingSubscriptions() != null) { // If it is null, any change to this catalog does not apply to existing subscriptions
                     final DateTime existingSubscriptionDate = CatalogDateHelper.toUTCDateTime(plan.getEffectiveDateForExistingSubscriptions());
-                    if (requestedDate.isAfter(existingSubscriptionDate)) { // This plan is now applicable to existing subs
+                    if (requestedDate.compareTo(existingSubscriptionDate) >= 0) { // This plan is now applicable to existing subs
                         return new CatalogPlanEntry(c, plan);
                     }
                 } else if (candidateInSubsequentCatalog == null) {
@@ -253,9 +248,9 @@ public class DefaultVersionedCatalog extends ValidatingConfig<DefaultVersionedCa
     @Override
     public Plan findPlan(final String name,
                          final DateTime requestedDate,
-                         final DateTime subscriptionStartDate)
+                         final DateTime subscriptionChangePlanDate)
             throws CatalogApiException {
-        final CatalogPlanEntry entry = findCatalogPlanEntry(new PlanRequestWrapper(name), requestedDate, subscriptionStartDate);
+        final CatalogPlanEntry entry = findCatalogPlanEntry(new PlanRequestWrapper(name), requestedDate, subscriptionChangePlanDate);
         return entry.getPlan();
     }
 
@@ -263,9 +258,9 @@ public class DefaultVersionedCatalog extends ValidatingConfig<DefaultVersionedCa
     public Plan createOrFindPlan(final PlanSpecifier spec,
                                  final PlanPhasePriceOverridesWithCallContext overrides,
                                  final DateTime requestedDate,
-                                 final DateTime subscriptionStartDate)
+                                 final DateTime subscriptionChangePlanDate)
             throws CatalogApiException {
-        final CatalogPlanEntry entry = findCatalogPlanEntry(new PlanRequestWrapper(spec, overrides), requestedDate, subscriptionStartDate);
+        final CatalogPlanEntry entry = findCatalogPlanEntry(new PlanRequestWrapper(spec, overrides), requestedDate, subscriptionChangePlanDate);
         return entry.getPlan();
     }
 
@@ -277,43 +272,43 @@ public class DefaultVersionedCatalog extends ValidatingConfig<DefaultVersionedCa
     @Override
     public PlanPhase findPhase(final String phaseName,
                                final DateTime requestedDate,
-                               final DateTime subscriptionStartDate)
+                               final DateTime subscriptionChangePlanDate)
             throws CatalogApiException {
         final String planName = DefaultPlanPhase.planName(phaseName);
-        final Plan plan = findPlan(planName, requestedDate, subscriptionStartDate);
+        final Plan plan = findPlan(planName, requestedDate, subscriptionChangePlanDate);
         return plan.findPhase(phaseName);
     }
 
     @Override
     public PriceList findPriceListForPlan(final String planName,
                                           final DateTime requestedDate,
-                                          final DateTime subscriptionStartDate)
+                                          final DateTime subscriptionChangePlanDate)
             throws CatalogApiException {
-        final CatalogPlanEntry entry = findCatalogPlanEntry(new PlanRequestWrapper(planName), requestedDate, subscriptionStartDate);
+        final CatalogPlanEntry entry = findCatalogPlanEntry(new PlanRequestWrapper(planName), requestedDate, subscriptionChangePlanDate);
         return entry.getStaticCatalog().findCurrentPricelist(entry.getPlan().getPriceListName());
     }
 
     @Override
     public BillingActionPolicy planCancelPolicy(final PlanPhaseSpecifier planPhase,
                                                 final DateTime requestedDate,
-                                                final DateTime subscriptionStartDate) throws CatalogApiException {
-        final StaticCatalog staticCatalog = getStaticCatalog(planPhase, requestedDate, subscriptionStartDate);
+                                                final DateTime subscriptionChangePlanDate) throws CatalogApiException {
+        final StaticCatalog staticCatalog = getStaticCatalog(planPhase, requestedDate, subscriptionChangePlanDate);
         return staticCatalog.planCancelPolicy(planPhase);
     }
 
     @Override
     public PlanAlignmentCreate planCreateAlignment(final PlanSpecifier specifier,
                                                    final DateTime requestedDate,
-                                                   final DateTime subscriptionStartDate) throws CatalogApiException {
-        final StaticCatalog staticCatalog = getStaticCatalog(specifier, requestedDate, subscriptionStartDate);
+                                                   final DateTime subscriptionChangePlanDate) throws CatalogApiException {
+        final StaticCatalog staticCatalog = getStaticCatalog(specifier, requestedDate, subscriptionChangePlanDate);
         return staticCatalog.planCreateAlignment(specifier);
     }
 
     @Override
     public BillingAlignment billingAlignment(final PlanPhaseSpecifier planPhase,
                                              final DateTime requestedDate,
-                                             final DateTime subscriptionStartDate) throws CatalogApiException {
-        final StaticCatalog staticCatalog = getStaticCatalog(planPhase, requestedDate, subscriptionStartDate);
+                                             final DateTime subscriptionChangePlanDate) throws CatalogApiException {
+        final StaticCatalog staticCatalog = getStaticCatalog(planPhase, requestedDate, subscriptionChangePlanDate);
         return staticCatalog.billingAlignment(planPhase);
     }
 
@@ -321,27 +316,27 @@ public class DefaultVersionedCatalog extends ValidatingConfig<DefaultVersionedCa
     public PlanChangeResult planChange(final PlanPhaseSpecifier from,
                                        final PlanSpecifier to,
                                        final DateTime requestedDate,
-                                       final DateTime subscriptionStartDate)
+                                       final DateTime subscriptionChangePlanDate)
             throws CatalogApiException {
         // Use the "to" specifier, to make sure the new plan always exists
-        final StaticCatalog staticCatalog = getStaticCatalog(to, requestedDate, subscriptionStartDate);
+        final StaticCatalog staticCatalog = versionForDate(requestedDate);
         return staticCatalog.planChange(from, to);
     }
 
     // Note that the PlanSpecifier billing period must refer here to the recurring phase one when a plan name isn't specified
-    private StaticCatalog getStaticCatalog(final PlanSpecifier spec, final DateTime requestedDate, final DateTime subscriptionStartDate) throws CatalogApiException {
-        final CatalogPlanEntry entry = findCatalogPlanEntry(new PlanRequestWrapper(spec), requestedDate, subscriptionStartDate);
+    private StaticCatalog getStaticCatalog(final PlanSpecifier spec, final DateTime requestedDate, final DateTime subscriptionChangePlanDate) throws CatalogApiException {
+        final CatalogPlanEntry entry = findCatalogPlanEntry(new PlanRequestWrapper(spec), requestedDate, subscriptionChangePlanDate);
         return entry.getStaticCatalog();
     }
 
     @Override
-    public void initialize(final DefaultVersionedCatalog catalog, final URI sourceURI) {
+    public void initialize(final DefaultVersionedCatalog catalog) {
         //
         // Initialization is performed first on each StandaloneCatalog (XMLLoader#initializeAndValidate)
         // and then later on the VersionedCatalog, so we only initialize and validate VersionedCatalog
         // *without** recursively through each StandaloneCatalog
         //
-        super.initialize(catalog, sourceURI);
+        super.initialize(catalog);
         CatalogSafetyInitializer.initializeNonRequiredNullFieldsWithDefaultValue(this);
     }
 
@@ -352,13 +347,13 @@ public class DefaultVersionedCatalog extends ValidatingConfig<DefaultVersionedCa
         for (final StandaloneCatalog c : versions) {
             if (effectiveDates.contains(c.getEffectiveDate())) {
                 errors.add(new ValidationError(String.format("Catalog effective date '%s' already exists for a previous version", c.getEffectiveDate()),
-                                               c.getCatalogURI(), VersionedCatalog.class, ""));
+                                               VersionedCatalog.class, ""));
             } else {
                 effectiveDates.add(c.getEffectiveDate());
             }
             if (!c.getCatalogName().equals(catalogName)) {
                 errors.add(new ValidationError(String.format("Catalog name '%s' is not consistent across versions ", c.getCatalogName()),
-                                               c.getCatalogURI(), VersionedCatalog.class, ""));
+                                               VersionedCatalog.class, ""));
             }
             errors.addAll(c.validate(c, errors));
         }
@@ -459,13 +454,48 @@ public class DefaultVersionedCatalog extends ValidatingConfig<DefaultVersionedCa
     }
 
     @Override
-    public void readExternal(final ObjectInput in) throws IOException {
-        MapperHolder.mapper().readerForUpdating(this).readValue(new ExternalizableInput(in));
+    public void readExternal(final ObjectInput in) throws IOException, ClassNotFoundException {
+        this.catalogName = in.readBoolean() ? in.readUTF() : null;
+        this.versions.addAll((Collection<? extends StandaloneCatalog>) in.readObject());
     }
 
     @Override
     public void writeExternal(final ObjectOutput oo) throws IOException {
-        MapperHolder.mapper().writeValue(new ExternalizableOutput(oo), this);
+        oo.writeBoolean(catalogName != null);
+        if (catalogName != null) {
+            // Can be null for placeholder XML
+            oo.writeUTF(catalogName);
+        }
+        oo.writeObject(versions);
+    }
+
+    @Override
+    public boolean equals(final Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+
+        final DefaultVersionedCatalog that = (DefaultVersionedCatalog) o;
+
+        if (versions != null ? !versions.equals(that.versions) : that.versions != null) {
+            return false;
+        }
+        return catalogName != null ? catalogName.equals(that.catalogName) : that.catalogName == null;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = versions != null ? versions.hashCode() : 0;
+        result = 31 * result + (catalogName != null ? catalogName.hashCode() : 0);
+        return result;
+    }
+
+    public void initialize(final Clock clock, final DefaultVersionedCatalog tenantCatalog) {
+        this.clock = clock;
+        initialize(tenantCatalog);
     }
 
     private static class CatalogPlanEntry {

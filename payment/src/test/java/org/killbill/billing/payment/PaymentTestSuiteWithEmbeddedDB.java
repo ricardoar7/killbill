@@ -18,6 +18,9 @@
 
 package org.killbill.billing.payment;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import org.killbill.billing.GuicyKillbillTestSuiteWithEmbeddedDB;
 import org.killbill.billing.account.api.AccountInternalApi;
 import org.killbill.billing.control.plugin.api.PaymentControlPluginApi;
@@ -34,6 +37,7 @@ import org.killbill.billing.payment.core.PaymentMethodProcessor;
 import org.killbill.billing.payment.core.PaymentPluginServiceRegistration;
 import org.killbill.billing.payment.core.PaymentProcessor;
 import org.killbill.billing.payment.core.PaymentRefresher;
+import org.killbill.billing.payment.core.janitor.IncompletePaymentAttemptTask;
 import org.killbill.billing.payment.core.janitor.IncompletePaymentTransactionTask;
 import org.killbill.billing.payment.core.janitor.Janitor;
 import org.killbill.billing.payment.core.sm.PaymentControlStateMachineHelper;
@@ -55,7 +59,6 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.BeforeMethod;
 
-import com.google.common.collect.ImmutableMap;
 import com.google.inject.Guice;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
@@ -113,6 +116,8 @@ public abstract class PaymentTestSuiteWithEmbeddedDB extends GuicyKillbillTestSu
     @Inject
     protected IncompletePaymentTransactionTask incompletePaymentTransactionTask;
     @Inject
+    protected IncompletePaymentAttemptTask incompletePaymentAttemptTask;
+    @Inject
     protected GlobalLocker locker;
     @Inject
     protected PluginControlPaymentAutomatonRunner pluginControlPaymentAutomatonRunner;
@@ -120,10 +125,11 @@ public abstract class PaymentTestSuiteWithEmbeddedDB extends GuicyKillbillTestSu
     protected PaymentControlStateMachineHelper paymentControlStateMachineHelper;
 
     @Override
-    protected KillbillConfigSource getConfigSource() {
-        return getConfigSource("/payment.properties",
-                               ImmutableMap.<String, String>of("org.killbill.payment.provider.default", MockPaymentProviderPlugin.PLUGIN_NAME,
-                                                               "killbill.payment.engine.events.off", "false"));
+    protected KillbillConfigSource getConfigSource(final Map<String, String> extraProperties) {
+        final Map<String, String> allExtraProperties = new HashMap<String, String>(extraProperties);
+        allExtraProperties.put("org.killbill.payment.provider.default", MockPaymentProviderPlugin.PLUGIN_NAME);
+        allExtraProperties.put("killbill.payment.engine.events.off", "false");
+        return getConfigSource("/payment.properties", allExtraProperties);
     }
 
     @BeforeClass(groups = "slow")
@@ -132,7 +138,7 @@ public abstract class PaymentTestSuiteWithEmbeddedDB extends GuicyKillbillTestSu
             return;
         }
 
-        final Injector injector = Guice.createInjector(new TestPaymentModuleWithEmbeddedDB(configSource, getClock()));
+        final Injector injector = Guice.createInjector(new TestPaymentModuleWithEmbeddedDB(configSource, clock));
         injector.injectMembers(this);
     }
 
@@ -148,6 +154,8 @@ public abstract class PaymentTestSuiteWithEmbeddedDB extends GuicyKillbillTestSu
         stateMachineConfigCache.loadDefaultPaymentStateMachineConfig(PaymentModule.DEFAULT_STATE_MACHINE_PAYMENT_XML);
 
         paymentExecutors.initialize();
+        retryService.initialize();
+        retryService.start();
         eventBus.start();
         Profiling.resetPerThreadProfilingData();
         clock.resetDeltaFromReality();
@@ -164,6 +172,7 @@ public abstract class PaymentTestSuiteWithEmbeddedDB extends GuicyKillbillTestSu
 
         janitor.stop();
         eventBus.stop();
+        retryService.stop();
         paymentExecutors.stop();
     }
 }
