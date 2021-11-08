@@ -29,18 +29,6 @@
     <name>killbill</name>
     <description>Library for managing recurring subscriptions and the associated billing</description>
     <url>http://github.com/killbill/killbill</url>
-    <distributionManagement>
-        <repository>
-            <id>releases</id>
-            <name>ST Releases</name>
-            <url>http://nexus.squaretrade.com/content/repositories/releases</url>
-        </repository>
-        <snapshotRepository>
-            <id>snapshots</id>
-            <name>ST Snapshots</name>
-            <url>http://nexus.squaretrade.com/content/repositories/snapshots</url>
-        </snapshotRepository>
-    </distributionManagement>
     <modules>
         <module>account</module>
         <module>api</module>
@@ -68,6 +56,18 @@
         <system>Github</system>
         <url>http://github.com/killbill/killbill</url>
     </issueManagement>
+    <distributionManagement>
+        <repository>
+            <id>releases</id>
+            <name>ST Releases</name>
+            <url>https://artifactory.squaretrade.com/artifactory/libs-release</url>
+        </repository>
+        <snapshotRepository>
+            <id>snapshots</id>
+            <name>ST Snapshots</name>
+            <url>https://artifactory.squaretrade.com/artifactory/libs-snapshot</url>
+        </snapshotRepository>
+    </distributionManagement>
     <properties>
         <killbill.version>${project.version}</killbill.version>
     </properties>

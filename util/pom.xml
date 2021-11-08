@@ -25,7 +25,7 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>killbill-util-squaretrade</artifactId>
-    <version>0.20.1</version>
+    <version>0.20.17</version>
     <packaging>jar</packaging>
     <name>killbill-util</name>
     <dependencies>
@@ -34,7 +34,7 @@
             <artifactId>aopalliance</artifactId>
             <scope>provided</scope>
         </dependency>
-        <dependency>
+        <dependency
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>
         </dependency>
@@ -197,7 +197,7 @@
         <dependency>
             <groupId>org.kill-bill.billing</groupId>
             <artifactId>killbill-internal-api</artifactId>
-            <version>0.20.1</version>
+            <version>0.20.17</version>
         </dependency>
         <dependency>
             <groupId>org.kill-bill.billing</groupId>
