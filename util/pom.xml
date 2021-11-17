@@ -34,7 +34,7 @@
             <artifactId>aopalliance</artifactId>
             <scope>provided</scope>
         </dependency>
-        <dependency
+        <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>
         </dependency>
